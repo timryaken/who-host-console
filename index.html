@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="theme-color" content="#18181a">
+<title>主持控台</title>
+<style>
+:root{--bg:#0f0f10;--panel:#18181a;--line:#2c2c30;--text:#ececec;--muted:#9a9aa0;--accent:#f2c200;--bad:#ff5a4f}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font-family:"PingFang TC","Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;display:grid;place-items:center;padding:16px}
+.card{width:100%;max-width:340px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px 20px;text-align:center}
+h1{font-size:18px;margin:0 0 4px}
+p{color:var(--muted);font-size:14px;margin:0 0 18px}
+input{width:100%;font:inherit;font-size:28px;letter-spacing:.4em;text-align:center;padding:12px;border-radius:12px;border:1px solid var(--line);background:#0f0f10;color:var(--text);outline:none}
+input:focus{border-color:var(--accent)}
+button{width:100%;margin-top:12px;font:inherit;font-size:17px;font-weight:700;padding:14px;border-radius:12px;border:0;background:var(--accent);color:#1a1500;cursor:pointer}
+button:disabled{opacity:.5}
+label{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-size:14px;color:var(--muted)}
+label input{width:auto;padding:0;font-size:inherit}
+.msg{min-height:22px;margin-top:12px;font-size:14px;color:var(--muted)}
+.msg.bad{color:var(--bad)}
+.bar{height:6px;background:#2e2e33;border-radius:3px;overflow:hidden;margin-top:10px;display:none}
+.bar i{display:block;height:100%;width:0;background:var(--accent)}
+</style>
+</head>
+<body>
+<form class="card" id="f">
+  <h1>主持控台</h1>
+  <p>請輸入密碼</p>
+  <input id="pw" type="password" inputmode="numeric" autocomplete="current-password" autofocus>
+  <button id="go">進入</button>
+  <label><input type="checkbox" id="remember" checked>記住這台裝置</label>
+  <div class="msg" id="msg"></div>
+  <div class="bar" id="bar"><i id="barI"></i></div>
+</form>
+<script>
+(() => { // 包在自己的範圍裡：解密後的控台會寫進同一個頁面，名稱不能撞到
+const SALT = '3OeFog6lYZUqJQX7ddLUlw==', ITER = 600000, CHECK = 'orndA+r5FUIF1oIS5a1/v6NT4OH4v8p5WMc5O/ps', VER = 'mv330uti';
+const RKEY = 'who-host-online-pw';
+const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const $ = id => document.getElementById(id);
+async function deriveKey(pw) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: b64(SALT), iterations: ITER, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+}
+const open = (key, buf) => crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12));
+async function fetchPayload() {
+  const r = await fetch('payload.bin?v=' + VER);
+  if (!r.ok) throw new Error('下載失敗（' + r.status + '）');
+  const total = +r.headers.get('content-length') || 0, reader = r.body.getReader(), parts = [];
+  let got = 0;
+  $('bar').style.display = 'block';
+  for (;;) {
+    const { done, value } = await reader.read(); if (done) break;
+    parts.push(value); got += value.length;
+    if (total) $('barI').style.width = (got / total * 100) + '%';
+    $('msg').textContent = '載入中… ' + (got / 1048576).toFixed(1) + (total ? ' / ' + (total / 1048576).toFixed(1) : '') + ' MB';
+  }
+  const out = new Uint8Array(got); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+async function enter(pw, auto) {
+  $('go').disabled = true; $('msg').className = 'msg'; $('msg').textContent = '驗證中…';
+  try {
+    const key = await deriveKey(pw);
+    try { await open(key, b64(CHECK)); }
+    catch (e) {
+      try { localStorage.removeItem(RKEY); } catch (_) {}
+      $('msg').className = 'msg bad'; $('msg').textContent = auto ? '' : '密碼錯誤'; $('go').disabled = false; $('pw').value = ''; $('pw').focus(); return;
+    }
+    try { if ($('remember').checked) localStorage.setItem(RKEY, pw); else localStorage.removeItem(RKEY); } catch (_) {}
+    const html = new TextDecoder().decode(await open(key, await fetchPayload()));
+    document.open(); document.write(html); document.close();
+  } catch (e) {
+    $('msg').className = 'msg bad'; $('msg').textContent = '載入失敗：' + e.message + '，請確認網路後再試一次'; $('go').disabled = false;
+  }
+}
+$('f').onsubmit = e => { e.preventDefault(); const pw = $('pw').value.trim(); if (pw) enter(pw, false); };
+let saved = null; try { saved = localStorage.getItem(RKEY); } catch (_) {}
+if (saved) { $('pw').value = saved; enter(saved, true); }
+})();
+</script>
+</body>
+</html>
