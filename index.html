@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow, noarchive">
 <meta name="theme-color" content="#18181a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>主持控台</title>
 <style>
 :root{--bg:#0f0f10;--panel:#18181a;--line:#2c2c30;--text:#ececec;--muted:#9a9aa0;--accent:#f2c200;--bad:#ff5a4f}
@@ -38,8 +41,10 @@ label input{width:auto;padding:0;font-size:inherit}
 </form>
 <script>
 (() => { // 包在自己的範圍裡：解密後的控台會寫進同一個頁面，名稱不能撞到
-const SALT = 'x4hWYsrkIkiqWWSV89mjnw==', ITER = 600000, CHECK = 'quic/EZ/kRp63VE6iMGNu/6wo76WZUpcp3fWIeS2', VER = 'mv4um0s4';
-const RKEY = 'who-host-online-pw';
+const SALT = 'nYspJ7GRmfUPwPLWRiekXQ==', ITER = 600000, CHECK = 'o/lYi9iKVZIv2y+bogALak5H30/4suVBPFAFkYIs', VER = 'mv4uxv9v';
+const RKEY = 'who-host-online-pw', PCACHE = 'who-host-payload', PURL = 'payload.bin?v=' + VER;
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (_) {} // 請 Chrome 不要自動清掉
 const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 const $ = id => document.getElementById(id);
 async function deriveKey(pw) {
@@ -48,7 +53,7 @@ async function deriveKey(pw) {
 }
 const open = (key, buf) => crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12));
 async function fetchPayload() {
-  const r = await fetch('payload.bin?v=' + VER);
+  const r = await fetch(PURL, { cache: 'no-store' });
   if (!r.ok) throw new Error('下載失敗（' + r.status + '）');
   const total = +r.headers.get('content-length') || 0, reader = r.body.getReader(), parts = [];
   let got = 0;
@@ -62,6 +67,13 @@ async function fetchPayload() {
   const out = new Uint8Array(got); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
   return out;
 }
+async function getPayload() { // 手機裡有存這一版就直接用（沒網路也行），沒有才下載並存起來
+  let c = null;
+  try { c = await caches.open(PCACHE); const hit = await c.match(PURL); if (hit) { $('msg').textContent = '開啟中…'; return new Uint8Array(await hit.arrayBuffer()); } } catch (_) {}
+  const buf = await fetchPayload();
+  if (c) try { for (const k of await c.keys()) await c.delete(k); await c.put(PURL, new Response(buf, { headers: { 'content-type': 'application/octet-stream' } })); } catch (_) {}
+  return buf;
+}
 async function enter(pw, auto) {
   $('go').disabled = true; $('msg').className = 'msg'; $('msg').textContent = '驗證中…';
   try {
@@ -72,10 +84,10 @@ async function enter(pw, auto) {
       $('msg').className = 'msg bad'; $('msg').textContent = auto ? '' : '密碼錯誤'; $('go').disabled = false; $('pw').value = ''; $('pw').focus(); return;
     }
     try { if ($('remember').checked) localStorage.setItem(RKEY, pw); else localStorage.removeItem(RKEY); } catch (_) {}
-    const html = new TextDecoder().decode(await open(key, await fetchPayload()));
+    const html = new TextDecoder().decode(await open(key, await getPayload()));
     document.open(); document.write(html); document.close();
   } catch (e) {
-    $('msg').className = 'msg bad'; $('msg').textContent = '載入失敗：' + e.message + '，請確認網路後再試一次'; $('go').disabled = false;
+    $('msg').className = 'msg bad'; $('msg').textContent = '載入失敗：' + e.message + '。這台手機還沒存過這一版，請連上網路再試一次'; $('go').disabled = false;
   }
 }
 $('f').onsubmit = e => { e.preventDefault(); const pw = $('pw').value.trim(); if (pw) enter(pw, false); };
